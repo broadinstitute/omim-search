@@ -129,19 +129,19 @@
               targets: [ 5 ],
               render: function ( data, type, row, meta ) {
                 if(type === 'display'){
-                  var geneId = data;
-                  data = '<a href="http://www.genecards.org/cgi-bin/carddisp.pl?gene=' + geneId + '" target="_blank">' + geneId + '</a>';
+                  var geneId = data
+                  data = '<a href="http://www.genecards.org/cgi-bin/carddisp.pl?gene=' + geneId + '" target="_blank">' + geneId + '</a>'
                 }
 
-                return data;
+                return data
               }
             },
             {
               targets: [ 6, 7 ],
               render: function ( data, type, row, meta ) {
                 if(type === 'display'){
-                  var mimNumber = data;
-                  data = '<a href="http://www.omim.org/entry/' + mimNumber + '" target="_blank">' + mimNumber + '</a>';
+                  var mimNumber = data
+                  data = '<a href="http://www.omim.org/entry/' + mimNumber + '" target="_blank">' + mimNumber + '</a>'
                 }
 
                 return data;
@@ -151,22 +151,22 @@
               targets: [ 9 ],
               render: function ( data, type, row, meta ) {
                 if(type === 'display'){
-                  var phenotypeMap = data;
-                  data = '<a title="' + OMIM_PHENOTYPE_MAP[phenotypeMap] + '" style="cursor: pointer">' + phenotypeMap + '</a>';
+                  var phenotypeMap = data
+                  data = '<a title="' + OMIM_PHENOTYPE_MAP[phenotypeMap] + '" style="cursor: pointer">' + phenotypeMap + '</a>'
                 }
 
-                return data;
+                return data
               }
             },
             {
               targets: [ 10 ],
               render: function ( data, type, row, meta ) {
                 if(type === 'display'){
-                  var psNumber = data;
-                  data = '<a href="https://www.omim.org/phenotypicSeries/?phenotypicSeriesNumber=' + psNumber + '" target="_blank">' + psNumber + '</a>';
+                  var psNumber = data
+                  data = '<a href="https://www.omim.org/phenotypicSeries/?phenotypicSeriesNumber=' + psNumber + '" target="_blank">' + psNumber + '</a>'
                 }
 
-                return data;
+                return data
               }
             },
 
@@ -177,7 +177,7 @@
           bDeferRender: true,
           initComplete: function(settings, json) {
             if(json.createdDate) {
-              $('#omim-data-timestamp').text(json.createdDate + " EST");
+              $('#omim-data-timestamp').text(json.createdDate + " EST")
             }
           }
         })
@@ -186,7 +186,7 @@
           dataTable.draw()
 
           if (window.resultsInfoText) {
-            $('#main_table_info').append(resultsInfoText);
+            $('#main_table_info').append(resultsInfoText)
           }
         } )
 
@@ -214,7 +214,7 @@
 
           if (window.genomicIntervals.length == 0) {
             // do a regular DataTables search
-            dataTable.search(searchBoxText)
+            dataTable.search(searchBoxText, true, true)
 
             window.resultsInfoText = searchBoxText.length > 0 ? ' for <b>keyword search</b> on ' + searchBoxText : ''
           } else {
@@ -224,7 +224,7 @@
           dataTable.draw()
 
           if (window.resultsInfoText) {
-            $('#main_table_info').append(resultsInfoText);
+            $('#main_table_info').append(resultsInfoText)
           }
         })
 
