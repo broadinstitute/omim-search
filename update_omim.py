@@ -43,6 +43,7 @@ Example genemap2.txt record:
 """
 import argparse
 import json
+import hail
 import logging
 import os
 import re
@@ -50,6 +51,7 @@ import requests
 import datetime
 from tqdm import tqdm
 import urllib.request
+
 
 logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s')
 logger = logging.getLogger(__name__)

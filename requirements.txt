@@ -1,0 +1,3 @@
+hail
+tqdm
+requests
