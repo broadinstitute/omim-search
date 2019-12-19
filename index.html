@@ -1,0 +1,270 @@
+<html>
+<head>
+  <title>OMIM viewer</title>
+
+  <!-- DataTables download builder: https://datatables.net/download/  - selected: DataTables, jQuery3, DataTables, Buttons: Column Visibility, HTML5 export, Print view, ColReorder, Responsive, Scroller -->
+  <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/v/dt/jq-3.3.1/jszip-2.5.0/dt-1.10.20/b-1.6.1/b-colvis-1.6.1/b-html5-1.6.1/b-print-1.6.1/cr-1.5.2/r-2.2.3/sc-2.0.1/datatables.min.css"/>
+  <style>
+    #search-box {
+      margin-bottom: 15px;
+      width: 525px;
+      /* height: 30px; */
+      /* -webkit-appearance:none; */
+    }
+
+    .dt-buttons {
+      float: right !important;
+      margin: 10px 15px;
+    }
+
+    .dataTables_length {
+      margin: 10px 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <div>
+    <b>Search:</b> &nbsp;<input type="search" id="search-box" placeholder="by keyword (eg. recessive) or by GRCh38 region(s) (eg. chr1:12345-54321, chr2:56789-98765)"><br />
+  </div>
+  <div>
+    <b>Show:</b> &nbsp;
+      <label><input type="radio" name="show-only" value="all" checked>All search hits</label> &nbsp;
+      <label><input type="radio" name="show-only" value="genes">OMIM genes</label> &nbsp;
+      <label><input type="radio" name="show-only" value="genes-with-phenotype">OMIM genes with phenotype</label><br />
+    <br />
+  </div>
+  <table id="main_table" class="display" style="width:100%">
+    <thead>
+    <tr>
+      <th>xStart</th>
+      <th>xEnd</th>
+      <th>GRCh38 Locus</th>
+      <th>Cyto</th>
+      <th>Gene</th>
+      <th>Gene Id</th>
+      <th>MIM #</th>
+      <th>Phenotype MIM #</th>
+      <th>Inheritance</th>
+      <th>Phenotype Map</th>
+      <th>Phenotypic Series #</th>
+      <th>Gene Description</th>
+      <th>Phenotype Description</th>
+      <th>Comments</th>
+      <th>Mouse Gene Id</th>
+    </tr>
+    </thead>
+  </table>
+
+  <br />
+  <br />
+  <b>OMIM Data Freshness:</b> &nbsp; <span id="omim-data-timestamp"> </span> <br />
+  <br />
+
+
+  <!-- "all genes", "all OMIM genes", "all OMIM genes with phenotype", "all OMIM recessive genes" -->
+  <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.36/pdfmake.min.js"></script>
+  <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.36/vfs_fonts.js"></script>
+  <script type="text/javascript" src="https://cdn.datatables.net/v/dt/jq-3.3.1/jszip-2.5.0/dt-1.10.20/b-1.6.1/b-colvis-1.6.1/b-html5-1.6.1/b-print-1.6.1/cr-1.5.2/r-2.2.3/sc-2.0.1/datatables.min.js"></script>
+  <script>
+
+    CHROMOSOMES = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', 'X', 'Y', 'M']
+
+    OMIM_PHENOTYPE_MAP = {
+      '1': 'The disorder is placed on the map based on its association with a gene, but the underlying defect is not known.',
+      '2': 'The disorder has been placed on the map by linkage; no mutation has been found.',
+      '3': 'The molecular basis for the disorder is known; a mutation has been found in the gene.',
+      '4': 'A contiguous gene deletion or duplication syndrome, multiple genes are deleted or duplicated causing the phenotype.',
+      '': ''
+    }
+
+    function getXpos(chrom, pos) {
+      /* Compute single number representing this chromosome and position.
+          chrom (string): examples '1', 'Y', 'M'
+          pos (integer): genomic position on chromosome
+      */
+
+      if (chrom.startsWith('chr')) {
+        chrom = chrom.replace('chr', '')
+      }
+      if (chrom.startsWith('M')) {
+        chrom = 'M'
+      }
+
+      if (pos < 1 || pos > 3e8) {
+        console.error('Invalid pos arg: ' + pos)
+      }
+
+      return (1 + CHROMOSOMES.indexOf(chrom))*1e9 + pos
+    }
+
+    $(document).ready(
+      function () {
+        var dataTable = $('#main_table').DataTable({
+          pageLength: 20,
+          lengthMenu: [ 10, 20, 50, 100, 200, 500, 1000],
+          ajax: "/omim.json",
+          dom: 'iBtlrp',
+          //responsive: true,
+          columnDefs: [
+            {
+              targets: [ 0 ],
+              visible: false,
+              type: "num",
+            },
+            {
+              targets: [ 1 ],
+              visible: false,
+            },
+            {
+              targets: [ 3,4,5,6,7,8,9,10,11,12,13,14 ],
+              className: "dt-center"
+            },
+            {
+              targets: [ 2,3,6,-1],
+              className: 'dt-nowrap',
+            },
+            {
+              targets: [ 5 ],
+              render: function ( data, type, row, meta ) {
+                if(type === 'display'){
+                  var geneId = data;
+                  data = '<a href="http://www.genecards.org/cgi-bin/carddisp.pl?gene=' + geneId + '" target="_blank">' + geneId + '</a>';
+                }
+
+                return data;
+              }
+            },
+            {
+              targets: [ 6, 7 ],
+              render: function ( data, type, row, meta ) {
+                if(type === 'display'){
+                  var mimNumber = data;
+                  data = '<a href="http://www.omim.org/entry/' + mimNumber + '" target="_blank">' + mimNumber + '</a>';
+                }
+
+                return data;
+              }
+            },
+            {
+              targets: [ 9 ],
+              render: function ( data, type, row, meta ) {
+                if(type === 'display'){
+                  var phenotypeMap = data;
+                  data = '<a title="' + OMIM_PHENOTYPE_MAP[phenotypeMap] + '" style="cursor: pointer">' + phenotypeMap + '</a>';
+                }
+
+                return data;
+              }
+            },
+            {
+              targets: [ 10 ],
+              render: function ( data, type, row, meta ) {
+                if(type === 'display'){
+                  var psNumber = data;
+                  data = '<a href="https://www.omim.org/phenotypicSeries/?phenotypicSeriesNumber=' + psNumber + '" target="_blank">' + psNumber + '</a>';
+                }
+
+                return data;
+              }
+            },
+
+
+          ],
+          buttons: ['copy', 'csv', 'excel', 'pdf', 'print'],
+          bAutoWidth: false,
+          bDeferRender: true,
+          initComplete: function(settings, json) {
+            if(json.createdDate) {
+              $('#omim-data-timestamp').text(json.createdDate + " EST");
+            }
+          }
+        })
+
+        $("input[name='show-only']").change( function() {
+          dataTable.draw()
+
+          if (window.resultsInfoText) {
+            $('#main_table_info').append(resultsInfoText);
+          }
+        } )
+
+        $("#search-box").keyup(function(e) {
+          if (e.keyCode !== 13) {
+            return
+          }
+
+          var searchBoxText = $('#search-box').val()
+
+          //check for one or more genomic intervals
+          window.genomicIntervals = []
+
+          var reg = /(chr)?([1-9XYM][0-9Tt]?)[-:\s]+([0-9]+)[-\s]+([0-9]+)/g
+          var match
+          var parsedIntervalStrings = []
+          while((match = reg.exec(searchBoxText)) !== null) {
+            var chrom = match[2]
+            var xStart = getXpos(chrom, parseInt(match[3]))
+            var xEnd = getXpos(chrom, parseInt(match[4]))
+
+            window.genomicIntervals.push([xStart, xEnd])
+            parsedIntervalStrings.push(chrom + ':' + match[3] + '-' + match[4])
+          }
+
+          if (window.genomicIntervals.length == 0) {
+            // do a regular DataTables search
+            dataTable.search(searchBoxText)
+
+            window.resultsInfoText = searchBoxText.length > 0 ? ' for <b>keyword search</b> on ' + searchBoxText : ''
+          } else {
+            window.resultsInfoText = ' for <b>region search</b> in ' + (parsedIntervalStrings.length <= 5 ? parsedIntervalStrings.join(', ') : (parsedIntervalStrings.length + ' genomic regions') )
+          }
+
+          dataTable.draw()
+
+          if (window.resultsInfoText) {
+            $('#main_table_info').append(resultsInfoText);
+          }
+        })
+
+        $.fn.dataTableExt.afnFiltering.push(
+          function( oSettings, aData, iDataIndex ) {
+            var GENE_SYMBOL_COLUMN_INDEX = 4
+            var GENE_ID_COLUMN_INDEX =  5
+            var PHENOTYPE_MIM_INDEX = 7
+
+            var rowHasGene = aData[GENE_SYMBOL_COLUMN_INDEX] || aData[GENE_ID_COLUMN_INDEX]
+            var rowHasPhenotype = aData[PHENOTYPE_MIM_INDEX]
+            var radioValue = $("input[name='show-only']:checked").val()
+            if ( radioValue === "genes" && !rowHasGene )
+            {
+              return false
+            }
+            else if ( radioValue === "genes-with-phenotype" && (!rowHasGene || !rowHasPhenotype) )
+            {
+              return false
+            }
+
+            if (window.genomicIntervals && window.genomicIntervals.length > 0) {
+              var xStart = parseInt(aData[0])
+              var xEnd = parseInt(aData[1])
+
+              var isInsideInterval = false
+              for (var i = 0; i < window.genomicIntervals.length; i += 1) {
+                var interval = window.genomicIntervals[i]
+                if ((xStart >= interval[0]) && (xEnd <= interval[1])) {
+                  isInsideInterval = true
+                  break
+                }
+              }
+              if (!isInsideInterval) {
+                return false
+              }
+            }
+            return true
+          }
+        )
+      })
+  </script>
+</body>
+</html>
