@@ -36,7 +36,12 @@
 <body>
 
   <div>
-    <b>Search:</b> &nbsp;<input type="search" id="search-box" placeholder="by keyword (eg. recessive) or by GRCh38 region(s) (eg. chr1:12345-54321, chr2:56789-98765)"><br />
+    <div style="padding-bottom:10px">
+      <b>Search:</b><span style="padding-left:30px"/>
+      <label><input type="radio" name="hg" value="hg38" checked>hg38</label> &nbsp;
+      <label><input type="radio" name="hg" value="hg19">hg19</label> &nbsp;
+    </div>
+    <textarea rows="10" cols="100" id="search-box" placeholder="Enter keywords (eg. dystrophy) or phrases (eg. 'myotonic dystrophy') or 1 or more regions separated by , or spaces (eg. chr1:12345-54321, chr2:56789-98765)"></textarea><br />
   </div>
   <div>
     <b>Show:</b> &nbsp;
@@ -50,7 +55,11 @@
     <tr>
       <th>xStart</th>
       <th>xEnd</th>
-      <th>GRCh38 Locus</th>
+      <th>hg38 Locus</th>
+      <th>xStart_hg19</th>
+      <th>xEnd_hg19</th>
+      <th>hg19 Locus</th>
+
       <th>Cyto</th>
       <th>Gene</th>
       <th>Gene Id</th>
@@ -119,24 +128,20 @@
           //responsive: true,
           columnDefs: [
             {
-              targets: [ 0 ],
+              targets: [ 0, 1, 3, 4 ],
               visible: false,
               type: "num",
             },
             {
-              targets: [ 1 ],
-              visible: false,
-            },
-            {
-              targets: [ 3,4,5,6,7,8,9,10,11,12,13,14 ],
+              targets: [ 6,7,8,9,10,11,12,13,14,15,16,17 ],
               className: "dt-center"
             },
             {
-              targets: [ 2,3,6,-1],
+              targets: [ 2,5,6,9,-1],
               className: 'dt-nowrap',
             },
             {
-              targets: [ 5 ],
+              targets: [ 8 ],
               render: function ( data, type, row, meta ) {
                 if(type === 'display'){
                   var geneId = data
@@ -147,7 +152,7 @@
               }
             },
             {
-              targets: [ 6, 7 ],
+              targets: [ 9, 10 ],
               render: function ( data, type, row, meta ) {
                 if(type === 'display'){
                   var mimNumber = data
@@ -158,7 +163,7 @@
               }
             },
             {
-              targets: [ 9 ],
+              targets: [ 12 ],
               render: function ( data, type, row, meta ) {
                 if(type === 'display'){
                   var phenotypeMap = data
@@ -169,7 +174,7 @@
               }
             },
             {
-              targets: [ 10 ],
+              targets: [ 13 ],
               render: function ( data, type, row, meta ) {
                 if(type === 'display'){
                   var psNumber = data
@@ -192,6 +197,14 @@
           }
         })
 
+        $("input[name='hg']").change( function() {
+          dataTable.draw()
+
+          if (window.resultsInfoText) {
+            $('#main_table_info').append(resultsInfoText)
+          }
+        } )
+
         $("input[name='show-only']").change( function() {
           dataTable.draw()
 
@@ -205,8 +218,7 @@
             return
           }
 
-          var searchBoxText = $('#search-box').val()
-
+          var searchBoxText = ($('#search-box').val() || '').trim()
           //check for one or more genomic intervals
           window.genomicIntervals = []
 
@@ -224,7 +236,7 @@
 
           if (window.genomicIntervals.length == 0) {
             // do a regular DataTables search
-            dataTable.search(searchBoxText, true, true)
+            dataTable.search(searchBoxText)
 
             window.resultsInfoText = searchBoxText.length > 0 ? ' for <b>keyword search</b> on ' + searchBoxText : ''
           } else {
@@ -246,24 +258,27 @@
 
             var rowHasGene = aData[GENE_SYMBOL_COLUMN_INDEX] || aData[GENE_ID_COLUMN_INDEX]
             var rowHasPhenotype = aData[PHENOTYPE_MIM_INDEX]
-            var radioValue = $("input[name='show-only']:checked").val()
-            if ( radioValue === "genes" && !rowHasGene )
+            var showRadioValue = $("input[name='show-only']:checked").val()
+            if ( showRadioValue === "genes" && !rowHasGene )
             {
               return false
             }
-            else if ( radioValue === "genes-with-phenotype" && (!rowHasGene || !rowHasPhenotype) )
+            else if ( showRadioValue === "genes-with-phenotype" && (!rowHasGene || !rowHasPhenotype) )
             {
               return false
             }
 
             if (window.genomicIntervals && window.genomicIntervals.length > 0) {
-              var xStart = parseInt(aData[0])
-              var xEnd = parseInt(aData[1])
+              var hgRadioValue = $("input[name='hg']:checked").val()
 
               var isInsideInterval = false
               for (var i = 0; i < window.genomicIntervals.length; i += 1) {
                 var interval = window.genomicIntervals[i]
-                if ((xStart >= interval[0]) && (xEnd <= interval[1])) {
+                if (hgRadioValue === 'hg38' && (parseInt(aData[0]) >= interval[0]) && (parseInt(aData[1]) <= interval[1])) {
+                  isInsideInterval = true
+                  break
+                }
+                if (hgRadioValue === 'hg19' && (parseInt(aData[3]) >= interval[0]) && (parseInt(aData[4]) <= interval[1])) {
                   isInsideInterval = true
                   break
                 }

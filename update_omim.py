@@ -43,14 +43,19 @@ Example genemap2.txt record:
 """
 import argparse
 import json
-import hail
 import logging
 import os
 import re
 import requests
 import datetime
+
 from tqdm import tqdm
 import urllib.request
+
+from pyliftover.liftover import LiftOver
+
+#import hail as hl
+#hl.get_reference('GRCh38').add_liftover("gs://hail-common/references/grch38_to_grch37.over.chain.gz", 'GRCh37')
 
 
 logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s')
@@ -66,18 +71,10 @@ OMIM_PHENOTYPE_MAP_METHOD_CHOICES = {
     4: 'a contiguous gene deletion or duplication syndrome, multiple genes are deleted or duplicated causing the phenotype.',
 }
 
-
-def get_remote_file_size(url):
-    if url.startswith("http"):
-        response = requests.head(url)
-        return int(response.headers.get('Content-Length', '0'))
-    elif url.startswith("ftp"):
-        return 0  # file size not yet implemented for FTP
-    else:
-        raise ValueError("Invalid url: {}".format(url))
+LIFTOVER_HG38_TO_HG19 = LiftOver('hg38', 'hg19')
 
 
-def download_file(url, to_dir=".", verbose=True):
+def download_file(url, to_dir=".", force_download=False, verbose=True):
     """Download the given file and returns its local path.
      Args:
         url (string): HTTP or FTP url
@@ -87,20 +84,20 @@ def download_file(url, to_dir=".", verbose=True):
 
     if not (url and url.startswith(("http://", "https://", "ftp://"))):
         raise ValueError("Invalid url: {}".format(url))
+
     local_file_path = os.path.join(to_dir, os.path.basename(url))
-    remote_file_size = get_remote_file_size(url)
-    if os.path.isfile(local_file_path) and os.path.getsize(local_file_path) == remote_file_size:
-        logger.info("Re-using {} previously downloaded from {}".format(local_file_path, url))
+    if not force_download and os.path.isfile(local_file_path) and  os.path.getsize(local_file_path) > 100:
         return local_file_path
 
-    logger.info(f"Downloading {url}. File size: {remote_file_size}")
+    logger.info(f"Downloading {url} to {local_file_path}")
+
     input_iter = urllib.request.urlopen(url)
     if verbose:
         logger.info("Downloading {} to {}".format(url, local_file_path))
         input_iter = tqdm(input_iter, unit=" data" if url.endswith("gz") else " lines")
 
     with open(local_file_path, 'w') as f:
-        f.writelines(input_iter)
+        f.writelines((line.decode('utf-8') for line in input_iter))
 
     input_iter.close()
 
@@ -230,9 +227,89 @@ def add_phenotypic_series(records, omim_key):
     logger.info(f'Found {len(mim_number_to_phenotypic_series)} records with phenotypic series')
 
 
+def convert_hg38_to_h19_using_pyliftover(hg38_chrom, hg38_start, hg38_end):
+    hg19_start_coord = LIFTOVER_HG38_TO_HG19.convert_coordinate(hg38_chrom, int(hg38_start))
+    if not hg19_start_coord or not hg19_start_coord[0]:
+        return None, None, None
+
+    hg19_end_coord = LIFTOVER_HG38_TO_HG19.convert_coordinate(hg38_chrom, int(hg38_end))
+    if not hg19_end_coord or not hg19_end_coord[0]:
+        return None, None, None
+
+    hg19_chrom = hg19_start_coord[0][0].lstrip('chr')
+    if hg19_chrom not in CHROMOSOMES:
+        return None, None, None
+
+    hg19_start = min(hg19_start_coord[0][1], hg19_end_coord[0][1])
+    hg19_end = max(hg19_start_coord[0][1], hg19_end_coord[0][1])
+
+    return hg19_chrom, hg19_start, hg19_end
+
+
+def get_hg19_coordinates_for_gene_id(gene_id): # A simple function to use requests.post to make the API call. Note the json= section.
+    request = requests.post('https://gnomad.broadinstitute.org/api', json={'query': f'{{gene(gene_id:"{gene_id}"){{chrom, start, stop}}}}'})
+    if request.status_code == 200:
+        results = request.json()
+        gene = results.get('data', {}).get('gene', {}) or {}
+        return gene.get('chrom'), gene.get('start'), gene.get('stop')
+
+
+def convert_hg38_to_h19(record):
+    hg38_chrom = 'chr{}'.format(record['chrom'].lstrip('chr'))
+    hg38_start = int(record['start'])
+    hg38_end = int(record['end'])
+
+    hg19_chrom, hg19_start, hg19_end = convert_hg38_to_h19_using_pyliftover(hg38_chrom, hg38_start, hg38_end)
+    if hg19_chrom is None and record['gene_id']:
+        hg19_chrom, hg19_start, hg19_end = get_hg19_coordinates_for_gene_id(record['gene_id'])
+
+    return hg19_chrom, hg19_start, hg19_end
+
+
+def add_hg19_coords(records):
+    failed_liftover = []
+    failed_liftover_gene_ids = []
+    for record in tqdm(records, unit=" records"):
+
+        hg19_chrom, hg19_start, hg19_end = convert_hg38_to_h19(record)
+
+        if hg19_chrom is None:
+            hg19_chrom, hg19_start, hg19_end = record['chrom'], int(record['start']), int(record['end'])
+
+            logger.info(f"Couldn't lift {record['locus']} from hg38 => hg19. Gene ID: {record['gene_id']}")
+            failed_liftover.append(record)
+            if record['gene_id']:
+                failed_liftover_gene_ids.append(record['gene_id'])
+
+        record['xstart_hg19'] = get_xpos(hg19_chrom, hg19_start)
+        record['xend_hg19'] = get_xpos(hg19_chrom, hg19_end)
+        record['locus_hg19'] = f"{hg19_chrom}:{hg19_start}-{hg19_end}"
+
+    logger.info(f"Lift-over failed for {len(failed_liftover)} out of {len(records)} records ({100*len(failed_liftover)/len(records):0.1f}%)")
+    logger.info(f"{len(set(failed_liftover_gene_ids))} had gene ids: {set(failed_liftover_gene_ids)}")
+
+
+"""
+def add_hg19_coords_using_hail(records):
+    for record in tqdm(records, unit=" records"):
+        hg19_coords = hl.eval(hl.liftover(
+            hl.locus_interval(f"chr{record['chrom']}", record['start'], record['end'], True, True, 'GRCh38'),
+            'GRCh37',
+            include_strand=True,
+        ))
+
+        if hg19_coords is not None:
+            #strand = "-" if hg19_coords.is_negative_strand else "+"
+            record['locus_hg19'] = f"{hg19_coords.result.start.contig}:{hg19_coords.result.start.position}-{hg19_coords.result.end.position}"
+        else:
+            record['locus_hg19'] = None
+"""
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument('--omim-key', help="OMIM key provided with registration", default=os.environ.get("OMIM_KEY"))
+    p.add_argument('--force', help="Download from OMIM even if local genemap2 file already exists", action="store_true")
     args = p.parse_args()
 
     if not args.omim_key:
@@ -244,11 +321,10 @@ def main():
     args = parse_args()
 
     try:
-        file_path = download_file(f"https://data.omim.org/downloads/{args.omim_key}/genemap2.txt")
+        file_path = download_file(f"https://data.omim.org/downloads/{args.omim_key}/genemap2.txt", force_download=args.force)
     except Exception as e:
         logger.error(e)
         file_path = "genemap2.txt"
-
 
     file_mod_timestamp = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
 
@@ -265,19 +341,24 @@ def main():
 
                 records.append(record)
 
-    add_phenotypic_series(records, args.omim_key)
-
-    data_matrix = []
     for record in records:
         record['xstart'] = get_xpos(record['chrom'], record['start'])
         record['xend'] = get_xpos(record['chrom'], record['end'])
         record['locus'] = f"{record['chrom']}:{record['start']}-{record['end']}"
 
+    add_hg19_coords(records)
+    add_phenotypic_series(records, args.omim_key)
+
+    data_matrix = []
+    for record in records:
         matrix_row = []
         for key in [
             'xstart',
             'xend',
             'locus',
+            'xstart_hg19',
+            'xend_hg19',
+            'locus_hg19',
             'cyto',
             'gene_symbols',
             'gene_id',
