@@ -17,7 +17,8 @@ http://api.omim.org/api/geneMap?chromosome=1
    which contains one or more mimNumber, phenotypeMimNumber, phenotype description, and
    phenotypeInheritance
 
-http://api.omim.org/api/entry?mimNumber=612367&format=json&include=all
+http://api.omim.org/api/entry?apiKey={omim_key}&include=geneMap&format=json&mimNumber={mim_numbers}
+http://api.omim.org/api/entry?apiKey={omim_key}&include=all&format=json&mimNumber=612367
    returns detailed info on a particular mim id
 
 Files:
@@ -42,12 +43,13 @@ Example genemap2.txt record:
 
 """
 import argparse
+import collections
+import datetime
 import json
 import logging
 import os
 import re
 import requests
-import datetime
 
 from tqdm import tqdm
 import urllib.request
@@ -62,7 +64,7 @@ logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s')
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-OMIM_ENTRIES_URL = 'https://api.omim.org/api/entry?apiKey={omim_key}&include=geneMap&format=json&mimNumber={mim_numbers}'
+OMIM_ENTRIES_URL = 'https://api.omim.org/api/entry?apiKey={omim_key}&include=all&format=json&mimNumber={mim_numbers}'
 
 OMIM_PHENOTYPE_MAP_METHOD_CHOICES = {
     1: 'the disorder is placed on the map based on its association with a gene, but the underlying defect is not known.',
@@ -93,7 +95,6 @@ def download_file(url, to_dir=".", force_download=False, verbose=True):
 
     input_iter = urllib.request.urlopen(url)
     if verbose:
-        logger.info("Downloading {} to {}".format(url, local_file_path))
         input_iter = tqdm(input_iter, unit=" data" if url.endswith("gz") else " lines")
 
     with open(local_file_path, 'w') as f:
@@ -159,7 +160,7 @@ def parse_genemap2_records(omim_line_fields):
         output_record['cyto'] = omim_line_fields['cyto_location']
         output_record['gene_id'] = omim_line_fields['ensembl_gene_id']
         output_record['mim_number'] = int(omim_line_fields['mim_number'])
-        output_record['gene_symbols'] = ", ".join([s for s in [omim_line_fields['approved_symbol'].strip()] + list(omim_line_fields['gene_symbols'].split(",")) if s])
+        output_record['gene_symbols'] = ", ".join(sorted(set([s for s in [omim_line_fields['approved_symbol'].strip()] + list(omim_line_fields['gene_symbols'].split(",")) if s])))
         output_record['gene_description'] = omim_line_fields['gene_name']
         output_record['comments'] = omim_line_fields['comments']
         output_record['mouse_gene_id'] = omim_line_fields['mouse_gene_symbol/id']
@@ -172,9 +173,8 @@ def parse_genemap2_records(omim_line_fields):
 
             record_with_phenotype = dict(output_record)  # copy
             record_with_phenotype["phenotype_description"] = phenotype_match.group(1)
-            record_with_phenotype["phenotype_mim_number"] = int(phenotype_match.group(3)) if phenotype_match.group(
-                3) else None
-            record_with_phenotype["phenotype_map_method"] = phenotype_match.group(4)
+            record_with_phenotype["phenotype_mim_number"] = int(phenotype_match.group(3)) if phenotype_match.group(3) else None
+            record_with_phenotype["phenotype_map_method"] = int(phenotype_match.group(4))
             record_with_phenotype["phenotype_inheritance"] = phenotype_match.group(6) or None
 
             # basic checks
@@ -195,14 +195,16 @@ def parse_genemap2_records(omim_line_fields):
 
 
 def add_phenotypic_series(records, omim_key):
-    logger.info('Adding phenotypic series information via the OMIM API.')
+    logger.info('Adding phenotypic_series_number, text, date_created and date_updated columns via the OMIM API.')
     mim_numbers = set()
     for omim_record in records:
-        if omim_record.get("phenotype_mim_number"):
+        if omim_record.get("mim_number"):
             mim_numbers.add(str(omim_record["mim_number"]))
     mim_numbers = list(mim_numbers)
 
-    mim_number_to_phenotypic_series = {}
+    # query the API for entries for each MIM number
+    phenotypic_series_found_counter = 0
+    mim_number_to_api_info = collections.defaultdict(dict)
     for i in tqdm(range(0, len(mim_numbers), 20), unit=" batches"):
         logger.debug('Fetching entries {}-{}'.format(i, i + 20))
         entries_to_fetch = mim_numbers[i:i + 20]
@@ -212,19 +214,34 @@ def add_phenotypic_series(records, omim_key):
 
         entries = response.json()['omim']['entryList']
         if len(entries) != len(entries_to_fetch):
-            raise Exception('Expected {} omim entries but recieved {}'.format(len(entries_to_fetch), len(entries)))
+            raise Exception('Expected {} omim entries but received {}'.format(len(entries_to_fetch), len(entries)))
 
         for entry in entries:
             mim_number = entry['entry']['mimNumber']
+
+            datetime_created = datetime.datetime.fromtimestamp(int(entry['entry']['epochCreated']))
+            mim_number_to_api_info[mim_number]['date_created'] = datetime_created.strftime("%Y-%m-%d")
+
+            datetime_updated = datetime.datetime.fromtimestamp(int(entry['entry']['epochUpdated']))
+            mim_number_to_api_info[mim_number]['date_updated'] = datetime_updated.strftime("%Y-%m-%d")
+
             for phenotype in entry['entry'].get('geneMap', {}).get('phenotypeMapList', []):
                 phenotypic_series_number = phenotype['phenotypeMap'].get('phenotypicSeriesNumber')
                 if phenotypic_series_number:
-                    mim_number_to_phenotypic_series[mim_number] = phenotypic_series_number
+                    mim_number_to_api_info[mim_number]['phenotypic_series_number'] = phenotypic_series_number
+                    phenotypic_series_found_counter += 1
+                    break
 
+            mim_number_to_api_info[mim_number]['text'] = ""
+            for textSection in entry['entry'].get('textSectionList', []):
+                if textSection.get('textSection', {}).get('textSectionName') in ("text", "description"):
+                    mim_number_to_api_info[mim_number]['text'] += textSection.get('textSection', {}).get('textSectionContent')
+
+    # transfer API info to the omim_record for each mim number
     for omim_record in records:
-        omim_record["phenotypic_series_number"] = mim_number_to_phenotypic_series.get(omim_record["mim_number"])
+        omim_record.update(mim_number_to_api_info.get(omim_record["mim_number"], {}))
 
-    logger.info(f'Found {len(mim_number_to_phenotypic_series)} records with phenotypic series')
+    logger.info(f'Found {phenotypic_series_found_counter} records with phenotypic series')
 
 
 def convert_hg38_to_h19_using_pyliftover(hg38_chrom, hg38_start, hg38_end):
@@ -247,7 +264,9 @@ def convert_hg38_to_h19_using_pyliftover(hg38_chrom, hg38_start, hg38_end):
 
 
 def get_hg19_coordinates_for_gene_id(gene_id): # A simple function to use requests.post to make the API call. Note the json= section.
-    request = requests.post('https://gnomad.broadinstitute.org/api', json={'query': f'{{gene(gene_id:"{gene_id}"){{chrom, start, stop}}}}'})
+    request = requests.post('https://gnomad.broadinstitute.org/api', json={
+        'query': f'{{gene(gene_id:"{gene_id}",reference_genome:GRCh37){{chrom, start, stop}}}}'
+    })
     if request.status_code == 200:
         results = request.json()
         gene = results.get('data', {}).get('gene', {}) or {}
@@ -273,19 +292,23 @@ def add_hg19_coords(records):
 
         hg19_chrom, hg19_start, hg19_end = convert_hg38_to_h19(record)
 
+        record["liftover_to_hg19_failed"] = False
         if hg19_chrom is None:
             hg19_chrom, hg19_start, hg19_end = record['chrom'], int(record['start']), int(record['end'])
 
-            logger.info(f"Couldn't lift {record['locus']} from hg38 => hg19. Gene ID: {record['gene_id']}")
+            #logger.info(f"Couldn't lift {record['locus']} from hg38 => hg19. Gene ID: {record['gene_id']}")
             failed_liftover.append(record)
+            record["liftover_to_hg19_failed"] = True
             if record['gene_id']:
                 failed_liftover_gene_ids.append(record['gene_id'])
 
         record['xstart_hg19'] = get_xpos(hg19_chrom, hg19_start)
         record['xend_hg19'] = get_xpos(hg19_chrom, hg19_end)
         record['locus_hg19'] = f"{hg19_chrom}:{hg19_start}-{hg19_end}"
+        if record['liftover_to_hg19_failed']:
+            record['locus_hg19'] += " ** failed liftover from hg38 to hg19. Reusing hg38 coords."
 
-    logger.info(f"Lift-over failed for {len(failed_liftover)} out of {len(records)} records ({100*len(failed_liftover)/len(records):0.1f}%)")
+    logger.info(f"Liftover failed for {len(failed_liftover)} out of {len(records)} records ({100*len(failed_liftover)/len(records):0.1f}%)")
     logger.info(f"{len(set(failed_liftover_gene_ids))} had gene ids: {set(failed_liftover_gene_ids)}")
 
 
@@ -353,24 +376,31 @@ def main():
     for record in records:
         matrix_row = []
         for key in [
+            'mim_number',                   # 0
+            'phenotype_mim_number',         # 1
+            'phenotypic_series_number',     # 2
+            'phenotype_inheritance',        # 3
+
+            'locus',           # 4
+            'locus_hg19',      # 5
+
+            'cyto',            # 6
+            'gene_symbols',    # 7
+            'gene_id',         # 8
+            'gene_description',        # 9
+            'phenotype_description',   # 10
+            'date_created',            # 11
+            'date_updated',            # 12
+            'mouse_gene_id',           # 13
+            'text',                    # 14
+            'comments',                # 15
+
             'xstart',
             'xend',
-            'locus',
             'xstart_hg19',
             'xend_hg19',
-            'locus_hg19',
-            'cyto',
-            'gene_symbols',
-            'gene_id',
-            'mim_number',
-            'phenotype_mim_number',
-            'phenotype_inheritance',
             'phenotype_map_method',
-            'phenotypic_series_number',
-            'gene_description',
-            'phenotype_description',
-            'comments',
-            'mouse_gene_id',
+            #'liftover_to_hg19_failed',
         ]:
             value = record.get(key)
             matrix_row.append(value if value is not None else '')
@@ -379,7 +409,7 @@ def main():
 
     json_string = json.dumps({
         "data": data_matrix,
-        "createdDate": file_mod_timestamp.strftime('%Y-%m-%d %H:%M:%S %p')
+        "date_downloaded_from_omim": file_mod_timestamp.strftime('%Y-%m-%d %I:%M:%S %p')
     })
 
     with open("omim.json", "wt") as f:
