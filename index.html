@@ -125,6 +125,12 @@
       }
     }
 
+    function cacheInputValues() {
+      window.showRadioValue = $("input[name='show-only']:checked").val()
+      window.inheritance = $("input[name='inheritance']:checked").val()
+      window.hgRadioValue = $("input[name='hg']:checked").val()
+    }
+
     function runSearch() {
       var searchBoxText = ($('#search-box').val() || '').trim()
       //check for one or more genomic intervals
@@ -172,6 +178,8 @@
         window.resultsInfoText += ' <b>region(s)</b>: ' + (parsedIntervalStrings.length <= 3 ? parsedIntervalStrings.join(', ') : (parsedIntervalStrings.length + ' genomic regions') )
       }
 
+      // cache input value for faster lookup
+      cacheInputValues()
 
       dataTable.draw()
 
@@ -179,10 +187,12 @@
         $('#data-table_info').append(resultsInfoText)
       }
 
+
       drawChart()
     }
 
     function drawChart() {
+
       if (!google || !google.visualization || !google.visualization.arrayToDataTable) {
         return
       }
@@ -244,7 +254,7 @@
           //minValue: 0,
         },
         tooltip: {
-          trigger: data.length > HISTOGRAM_DATA_SIZE_THRESHOLD? 'none': 'focus',
+          //trigger: data.length > HISTOGRAM_DATA_SIZE_THRESHOLD? 'none': 'focus',
           isHtml: true,
           ignoreBounds: true,
         },
@@ -280,8 +290,13 @@
       function () {
         $('.ui.radio.checkbox').checkbox()
 
+
+
         google.charts.load("current", {packages:["corechart"]});
         google.charts.setOnLoadCallback(drawChart);
+
+        // cache input value for faster lookup
+        cacheInputValues()
 
         window.dataTable = $('#data-table').DataTable({
           pageLength: 20,
@@ -358,7 +373,8 @@
             if(json.date_downloaded_from_omim) {
               $('#omim-data-timestamp').text($.timeago(json.date_downloaded_from_omim))
             }
-            drawChart()
+            // cache input value for faster lookup
+            runSearch() //init everything
           }
         })
 
@@ -370,19 +386,17 @@
           runSearch()
         })
         */
-
         $.fn.dataTableExt.afnFiltering.push(
           function( oSettings, aData, iDataIndex ) {
             if (window.genomicIntervals && window.genomicIntervals.length > 0) {
-              var hgRadioValue = $("input[name='hg']:checked").val()
               var isInsideInterval = false
               for (var i = 0; i < window.genomicIntervals.length; i += 1) {
                 var interval = window.genomicIntervals[i]
-                if (hgRadioValue === 'hg38' && (parseInt(aData[COLUMN_IDX.XSTART]) >= interval[0]) && (parseInt(aData[COLUMN_IDX.XEND]) <= interval[1])) {
+                if (window.hgRadioValue === 'hg38' && (parseInt(aData[COLUMN_IDX.XSTART]) >= interval[0]) && (parseInt(aData[COLUMN_IDX.XEND]) <= interval[1])) {
                   isInsideInterval = true
                   break
                 }
-                if (hgRadioValue === 'hg19' && (parseInt(aData[COLUMN_IDX.XSTART_HG19]) >= interval[0]) && (parseInt(aData[COLUMN_IDX.XEND_HG19]) <= interval[1])) {
+                if (window.hgRadioValue === 'hg19' && (parseInt(aData[COLUMN_IDX.XSTART_HG19]) >= interval[0]) && (parseInt(aData[COLUMN_IDX.XEND_HG19]) <= interval[1])) {
                   isInsideInterval = true
                   break
                 }
@@ -392,23 +406,20 @@
               }
             }
 
-            var showRadioValue = $("input[name='show-only']:checked").val()
-            if ( showRadioValue === "genes" || showRadioValue === "genes-with-phenotype") {
+            if ( window.showRadioValue === "genes" || window.showRadioValue === "genes-with-phenotype") {
               var rowHasGene = aData[COLUMN_IDX.GENE_SYMBOLS].trim() || aData[COLUMN_IDX.GENE_ID].trim()
               var rowHasPhenotype = aData[COLUMN_IDX.PHENOTYPE_MIM_NUMBER].trim()
-              var showRadioValue = $("input[name='show-only']:checked").val()
-              if ( showRadioValue === "genes" && !rowHasGene )
+              if ( window.showRadioValue === "genes" && !rowHasGene )
               {
                 return false
               }
-              else if ( showRadioValue === "genes-with-phenotype" && (!rowHasGene || !rowHasPhenotype) )
+              else if ( window.showRadioValue === "genes-with-phenotype" && (!rowHasGene || !rowHasPhenotype) )
               {
                 return false
               }
             }
 
-            var inheritance = $("input[name='inheritance']:checked").val()
-            if (inheritance !== "any" && aData[COLUMN_IDX.PHENOTYPE_INHERITANCE].toLowerCase().indexOf(inheritance) === -1) {
+            if (window.inheritance !== "any" && aData[COLUMN_IDX.PHENOTYPE_INHERITANCE].toLowerCase().indexOf(inheritance) === -1) {
                return false
             }
 
@@ -536,11 +547,11 @@
       <!-- 14 --><th style="min-width:1000px">Text</th>
       <!-- 15 --><th style="min-width:170px">Comments</th>
 
-      <!-- 16 --><th></th>
-      <!-- 17 --><th></th>
-      <!-- 18 --><th></th>
-      <!-- 19 --><th></th>
-      <!-- 20 --><th></th>
+      <!-- 16 --><th>xStart</th>
+      <!-- 17 --><th>xEnd</th>
+      <!-- 18 --><th>xStart hg19</th>
+      <!-- 19 --><th>xEnd hg19</th>
+      <!-- 20 --><th>Phenotype Map Method</th>
 
     </tr>
     </thead>
