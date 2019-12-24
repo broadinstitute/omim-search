@@ -416,6 +416,7 @@ def main():
         f.write(json_string)
 
     logger.info(f"Generated omim.json with {len(records)} records")
+    logger.info(f"\n\n")
 
 
 if __name__ == "__main__":
