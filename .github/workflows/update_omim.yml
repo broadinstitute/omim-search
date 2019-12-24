@@ -31,7 +31,7 @@ jobs:
         if [ $RESULT -eq 0 ]; then
           git config --global user.name 'bw2'
           git config --global user.email 'bw2@users.noreply.github.com'
-          git commit -am "Update OMIM data" omim.json
+          git commit -am "Update OMIM data"
           git push
         fi
         
